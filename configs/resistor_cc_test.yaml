@@ -1,0 +1,22 @@
+# RESISTOR TEST ONLY — not a cell-charging profile.
+# Intended load: your measured 467 ohm resistor, rated at least 0.25 W.
+
+cell:
+  model: "RESISTOR_467_OHM"
+  chemistry: "resistor_test"
+  capacity_Ah: null
+  capacitance_F: null
+
+charge:
+  max_current_A: 0.020
+
+  current_A: 0.010
+  current_fraction: null
+  c_rate: null
+
+  cv_voltage_V: 7.00
+
+  termination_current_A: 0.002
+  termination_hold_s: 3
+
+  timeout_s: 15

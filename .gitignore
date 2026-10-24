@@ -106,6 +106,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.DPS150venv
 env/
 venv/
 ENV/
@@ -163,3 +164,9 @@ Thumbs.db
 *.bak
 *.swp
 *~
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+logs/

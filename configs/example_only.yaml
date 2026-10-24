@@ -1,0 +1,22 @@
+# SOFTWARE TEST ONLY.
+# These values are not a recommendation for any real cell.
+
+cell:
+  model: "EXAMPLE_ONLY"
+  chemistry: "example"
+  capacity_Ah: 0.200
+  capacitance_F: null
+
+charge:
+  max_current_A: 0.200
+
+  current_A: null
+  current_fraction: null
+  c_rate: 0.5
+
+  cv_voltage_V: 3.0
+
+  termination_current_A: 0.020
+  termination_hold_s: 30
+
+  timeout_s: 7200

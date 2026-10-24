@@ -1,0 +1,20 @@
+cell:
+  model: null
+  chemistry: null
+  capacity_Ah: null              # Required when using c_rate.
+  capacitance_F: null            # For LICs/supercaps; otherwise null.
+
+charge:
+  max_current_A: null            # DUT's maximum permitted charging current.
+
+  # Choose ONE method; leave the other two null.
+  current_A: null                # Absolute charging current in amperes.
+  current_fraction: 0.5          # Fraction of max_current_A.
+  c_rate: null                   # Example: 0.5 means 0.5C.
+
+  cv_voltage_V: null             # No automatic diode-drop compensation.
+
+  termination_current_A: null
+  termination_hold_s: 30
+
+  timeout_s: 7200                # Example limit; timeout means fault.

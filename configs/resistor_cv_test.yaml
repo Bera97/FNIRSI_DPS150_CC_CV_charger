@@ -1,0 +1,23 @@
+# RESISTOR TEST ONLY — not a cell-charging profile.
+# Exercises CV qualification, termination hold, and normal completion.
+# Intended load: measured 467 ohm resistor, rated at least 0.25 W.
+
+cell:
+  model: "RESISTOR_CV_TERMINATION_TEST"
+  chemistry: "resistor_test"
+  capacity_Ah: null
+  capacitance_F: null
+
+charge:
+  max_current_A: 0.020
+
+  current_A: 0.020
+  current_fraction: null
+  c_rate: null
+
+  cv_voltage_V: 3.00
+
+  termination_current_A: 0.015
+  termination_hold_s: 5
+
+  timeout_s: 20
