@@ -1,589 +1,203 @@
-# Python Library for FNIRSI DPS-150
+# FNIRSI DPS150 CC–CV Charger
 
-A pure Python library for controlling the FNIRSI DPS-150 programmable power supply via serial communication. This library provides a clean async/await API for all device operations without any UI dependencies.
+Python command-line application for supervised CC–CV charging using an FNIRSI DPS150 power supply. Charging parameters are configured in YAML.
 
-[![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+## Safety and limitations
+
+This is a supervised bench-charger prototype, not an unattended charger.
+
+- The DPS150 remains on if the PC/data connection is lost. Software cannot guarantee shutdown through a disconnected interface.
+- Voltage is measured at the supply, not independently at the cell terminals.
+- No automatic diode-drop compensation is applied.
+- Low-current readback accuracy must be validated before relying on a termination threshold.
+- No cell-temperature sensing, precharge/recovery, balancing, float charging, or independent watchdog is implemented.
+- Output-disabled state does not mean an attached cell or capacitor is discharged.
+
+Use datasheet-approved charging parameters, verify polarity and initial cell condition, and keep a manual shutdown method accessible.
 
 ## Features
 
-- **Async/await support** - Non-blocking operations for efficient device control
-- **Complete protocol implementation** - Based on the [JavaScript reference implementation](https://github.com/cho45/fnirsi-dps-150)
-- **Full device control** - All device features accessible via Python
-- **State monitoring** - Real-time state updates with callback support
-- **Type hints** - Full type annotations for better IDE support
-- **Comprehensive examples** - Jupyter notebook with practical examples
+- Charging current selected in amperes, C-rate, or a fraction of maximum current.
+- Configuration and provisional setup-limit checks.
+- Default dry-run mode and confirmation before hardware execution.
+- Setpoint readback verification and fresh-response acquisition.
+- CV-qualified termination-current hold and charging timeout.
+- CSV measurements and JSON configuration/result logging.
+- Shutdown attempts on completion, interruption, and faults.
+- No automatic reconnect or restart.
 
-### Supported Features
+## Setup
 
-- ✅ Voltage and current control (0-30V, 0-5A typical)
-- ✅ Protection settings (OVP, OCP, OPP, OTP, LVP)
-- ✅ Preset groups (6 configurable presets)
-- ✅ Energy metering (capacity in Ah, energy in Wh)
-- ✅ Device information (model, firmware, hardware versions)
-- ✅ Display and audio settings (brightness, volume)
-- ✅ Real-time monitoring (voltage, current, power, temperature)
+Run commands from the project root in VS Code's PowerShell terminal.
 
-## Installation
+Activate the existing environment:
 
-### From Source
-
-```bash
-git clone <repository-url>
-cd DPS-150
-pip install -r requirements.txt
+```powershell
+.\.DPS150venv\Scripts\Activate.ps1
 ```
 
-Or install as a package:
+Install the local DPS150 library and YAML dependency:
 
-```bash
-pip install .
+```powershell
+python -m pip install .
+python -m pip install PyYAML
 ```
 
-### Requirements
+Select `.DPS150venv\Scripts\python.exe` as the VS Code interpreter.
 
-- Python 3.9 or higher
-- pyserial-asyncio >= 0.6
-- pyserial >= 3.5
+Upstream library: https://github.com/KochC/DPS-150-python-library
 
-## Quick Start
+## Configuration
 
-### Basic Usage
+Save your profile as `configs/charge.yaml`:
 
-```python
-import asyncio
-from dps150 import DPS150
+```yaml
+cell:
+  model: null
+  chemistry: null
+  capacity_Ah: null              # Required for C-rate.
+  capacitance_F: null            # Optional LIC/supercapacitor metadata.
 
-async def main():
-    # Connect to device
-    async with DPS150(port="/dev/ttyUSB0") as device:  # or "COM3" on Windows
-        # Get device information
-        info = await device.get_info()
-        print(f"Model: {info.model_name}")
-        print(f"Firmware: {info.firmware_version}")
-        
-        # Set voltage and current
-        await device.set_voltage(12.0)
-        await device.set_current(1.0)
-        
-        # Enable output
-        await device.enable_output()
-        
-        # Read current state
-        state = await device.get_all()
-        print(f"Output: {state.output_voltage:.3f}V @ {state.output_current:.3f}A")
-        
-        # Disable output
-        await device.disable_output()
+charge:
+  max_current_A: null            # DUT's permitted maximum charge current.
 
-if __name__ == "__main__":
-    asyncio.run(main())
+  # Set exactly ONE option; leave the others null.
+  current_A: null
+  current_fraction: 0.5
+  c_rate: null
+
+  cv_voltage_V: null
+
+  termination_current_A: null
+  termination_hold_s: 30
+  timeout_s: 7200
 ```
 
-### Finding Your Serial Port
+Replace required `null` values with verified DUT parameters. The example hold and timeout are not cell-specific recommendations.
 
-```python
-from dps150 import list_serial_ports
+| Current option | Calculation |
+|---|---|
+| `current_A` | Specified amperes |
+| `current_fraction` | `max_current_A × current_fraction` |
+| `c_rate` | `capacity_Ah × c_rate` |
 
-# List all available serial ports
-ports = list_serial_ports()
-for port in ports:
-    print(f"Device: {port['device']}")
-    print(f"  Description: {port['description']}")
-    print(f"  VID: {port['vid']}, PID: {port['pid']}")
+The resolved current must not exceed `max_current_A`. Chemistry is descriptive metadata; it does not automatically validate charging limits.
+
+### Current software limits
+
+Defined in `charge_preflight.py`:
+
+- Maximum voltage command: 9 V.
+- Charging-current command: 10–100 mA.
+- Voltage/current setting increments: 0.01 V / 0.001 A.
+
+These are provisional project limits, not accuracy guarantees or the supply's full capabilities. Requests are rejected rather than silently rounded or clamped.
+
+## Usage
+
+### Validate configuration
+
+```powershell
+python .\charge_config.py .\configs\charge.yaml
+python .\charge_preflight.py .\configs\charge.yaml
 ```
 
-## Examples
+### Dry run — no hardware connection
 
-### Voltage Sweep
-
-```python
-import asyncio
-from dps150 import DPS150
-
-async def main():
-    async with DPS150(port="/dev/ttyUSB0") as device:
-        await device.set_current(1.0)  # Set current limit
-        await device.enable_output()
-        
-        # Sweep voltage from 0 to 12V
-        for voltage in range(0, 13):
-            await device.set_voltage(float(voltage))
-            await asyncio.sleep(0.5)  # Wait at each voltage
-            state = await device.get_all()
-            print(f"{voltage}V: {state.output_voltage:.3f}V, "
-                  f"{state.output_current:.3f}A, {state.output_power:.3f}W")
-        
-        await device.disable_output()
-
-asyncio.run(main())
+```powershell
+python .\charger.py .\configs\charge.yaml
 ```
 
-### Setting Protection Limits
+### Hardware execution
 
-```python
-import asyncio
-from dps150 import DPS150
-
-async def main():
-    async with DPS150(port="/dev/ttyUSB0") as device:
-        # Set protection limits
-        await device.set_ovp(15.0)  # Over-voltage protection at 15V
-        await device.set_ocp(2.0)   # Over-current protection at 2A
-        await device.set_opp(20.0)  # Over-power protection at 20W
-        
-        # Verify settings
-        state = await device.get_all()
-        print(f"OVP: {state.over_voltage_protection:.2f}V")
-        print(f"OCP: {state.over_current_protection:.2f}A")
-        print(f"OPP: {state.over_power_protection:.2f}W")
-
-asyncio.run(main())
+```powershell
+python .\charger.py .\configs\charge.yaml --run
 ```
 
-### State Monitoring with Callbacks
+Type `START` when prompted.
 
-```python
-import asyncio
-from dps150 import DPS150
+To select another port:
 
-async def main():
-    async with DPS150(port="/dev/ttyUSB0") as device:
-        # Register callback for state updates
-        def on_update(state):
-            print(f"V: {state.output_voltage:.3f}V, "
-                  f"I: {state.output_current:.3f}A, "
-                  f"P: {state.output_power:.3f}W")
-            if state.protection_state.value:
-                print(f"⚠ Protection: {state.protection_state.value}")
-        
-        device.on_state_update(on_update)
-        
-        await device.set_voltage(10.0)
-        await device.set_current(1.0)
-        await device.enable_output()
-        
-        # Monitor for 10 seconds
-        await asyncio.sleep(10)
-        
-        await device.disable_output()
-
-asyncio.run(main())
+```powershell
+python .\charger.py .\configs\charge.yaml --port COM5 --run
 ```
 
-### Using Preset Groups
+Press `Ctrl+C` once to interrupt and allow cleanup to finish. If shutdown cannot be verified, switch output off manually.
 
-```python
-import asyncio
-from dps150 import DPS150
+## Charging and termination
 
-async def main():
-    async with DPS150(port="/dev/ttyUSB0") as device:
-        # Configure preset groups
-        await device.set_group(1, 5.0, 0.5)   # Group 1: 5V @ 0.5A
-        await device.set_group(2, 12.0, 1.0)  # Group 2: 12V @ 1.0A
-        
-        # Load and use group 1
-        await device.load_group(1)
-        await device.enable_output()
-        await asyncio.sleep(2)
-        
-        # Switch to group 2
-        await device.load_group(2)
-        await asyncio.sleep(2)
-        
-        await device.disable_output()
+The DPS150 performs CC–CV regulation; Python sets the limits and supervises the run.
 
-asyncio.run(main())
+Completion requires:
+
+1. Reported CV mode.
+2. Supply voltage within 0.03 V of the target.
+3. Current at or below `termination_current_A`.
+4. Those conditions maintained for `termination_hold_s`.
+
+Losing qualification resets the hold. Timeout is a fault, not successful completion.
+
+The runner also checks telemetry, protection state, setpoint changes, unexpected output-off, and excessive supply voltage. It does not automatically program the device's OVP/OCP/OPP/OTP/LVP settings.
+
+## Logs and results
+
+Each confirmed hardware run creates:
+
+```text
+logs/<UTC timestamp>/
+├── resolved_config.json
+├── measurements.csv
+└── result.json
 ```
 
-## API Reference
+The CSV records measurements, mode, protection, CV qualification, and hold progress.
 
-### Connection Management
+| Outcome | Meaning |
+|---|---|
+| `complete` | Termination condition met and output-disabled state verified |
+| `interrupted` | Run cancelled and output-disabled state verified |
+| `fault` | Run failed or shutdown could not be verified |
 
-#### `DPS150(port: Optional[str] = None)`
+Shutdown verification checks the device's reported output state, not settled zero terminal voltage. Stored voltage/current settings remain unchanged.
 
-Create a DPS150 device instance.
+## Tests
 
-**Parameters:**
-- `port` (str, optional): Serial port path (e.g., `/dev/ttyUSB0` on Linux/Mac, `COM3` on Windows). If `None`, attempts auto-detection.
+Run all automated tests without hardware:
 
-**Example:**
-```python
-device = DPS150(port="/dev/ttyUSB0")
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-#### `async connect(port: Optional[str] = None) -> None`
+At the implementation milestone, 61 tests passed.
 
-Connect to the device and initialize communication.
+Resistor integration profiles:
 
-**Raises:**
-- `DPS150ConnectionError`: If connection fails
-
-#### `async disconnect() -> None`
-
-Disconnect from the device and clean up resources.
-
-#### Context Manager Support
-
-The `DPS150` class supports async context manager for automatic connection management:
-
-```python
-async with DPS150(port="/dev/ttyUSB0") as device:
-    # Device is automatically connected
-    await device.set_voltage(12.0)
-# Device is automatically disconnected
+```powershell
+python .\charger.py .\configs\resistor_cc_test.yaml --run
+python .\charger.py .\configs\resistor_cv_test.yaml --run
 ```
 
-### Reading Device State
+Use the specified resistor load—not a cell:
 
-#### `async get_all() -> DeviceState`
+- CC test: expected timeout fault followed by shutdown.
+- CV test: expected successful termination followed by shutdown.
 
-Get complete device state including all measurements and settings.
+Manual interruption and communication-loss handling were also tested. Communication loss correctly produced a fault, but the physical output remained enabled.
 
-**Returns:**
-- `DeviceState`: Complete device state object
+## Project files
 
-#### `async get_voltage() -> float`
+| File/folder | Purpose |
+|---|---|
+| `charger.py` | Main runner and logging |
+| `charge_config.py` | YAML validation and current calculation |
+| `charge_preflight.py` | Provisional setup checks |
+| `charge_monitor.py` | Termination and timing logic |
+| `dps150_adapter.py` | Fresh complete-state response acquisition |
+| `configs/` | YAML profiles |
+| `checks/` | Hardware diagnostics |
+| `tests/` | Automated tests |
+| `logs/` | Hardware-run records |
 
-Get current output voltage.
+Fresh acquisition timestamps packet receipt; it does not establish calibration or an instrument acquisition timestamp. Do not run the library's background polling alongside the adapter.
 
-**Returns:**
-- `float`: Output voltage in volts
-
-#### `async get_current() -> float`
-
-Get current output current.
-
-**Returns:**
-- `float`: Output current in amperes
-
-#### `async get_power() -> float`
-
-Get current output power.
-
-**Returns:**
-- `float`: Output power in watts
-
-#### `async get_temperature() -> float`
-
-Get device temperature.
-
-**Returns:**
-- `float`: Temperature in degrees Celsius
-
-#### `async get_info() -> DeviceInfo`
-
-Get device information (model name, firmware version, hardware version).
-
-**Returns:**
-- `DeviceInfo`: Device information object
-
-### Setting Output Values
-
-#### `async set_voltage(value: float) -> None`
-
-Set target output voltage.
-
-**Parameters:**
-- `value` (float): Voltage in volts (typically 0-30V)
-
-#### `async set_current(value: float) -> None`
-
-Set target output current (current limit).
-
-**Parameters:**
-- `value` (float): Current in amperes (typically 0-5A)
-
-#### `async enable_output() -> None`
-
-Enable the output (turn on power supply).
-
-#### `async disable_output() -> None`
-
-Disable the output (turn off power supply).
-
-### Protection Settings
-
-#### `async set_ovp(value: float) -> None`
-
-Set over-voltage protection threshold.
-
-**Parameters:**
-- `value` (float): Voltage threshold in volts
-
-#### `async set_ocp(value: float) -> None`
-
-Set over-current protection threshold.
-
-**Parameters:**
-- `value` (float): Current threshold in amperes
-
-#### `async set_opp(value: float) -> None`
-
-Set over-power protection threshold.
-
-**Parameters:**
-- `value` (float): Power threshold in watts
-
-#### `async set_otp(value: float) -> None`
-
-Set over-temperature protection threshold.
-
-**Parameters:**
-- `value` (float): Temperature threshold in degrees Celsius
-
-#### `async set_lvp(value: float) -> None`
-
-Set low-voltage protection threshold.
-
-**Parameters:**
-- `value` (float): Voltage threshold in volts
-
-### Preset Groups
-
-#### `async set_group(group: int, voltage: float, current: float) -> None`
-
-Set preset group values.
-
-**Parameters:**
-- `group` (int): Group number (1-6)
-- `voltage` (float): Voltage in volts
-- `current` (float): Current in amperes
-
-**Raises:**
-- `ValueError`: If group number is not 1-6
-
-#### `async load_group(group: int) -> None`
-
-Load preset group values as current settings.
-
-**Parameters:**
-- `group` (int): Group number (1-6)
-
-**Raises:**
-- `ValueError`: If group number is not 1-6
-
-### Energy Metering
-
-#### `async start_metering() -> None`
-
-Start energy metering (accumulates capacity and energy).
-
-#### `async stop_metering() -> None`
-
-Stop energy metering.
-
-### Display and Audio
-
-#### `async set_brightness(value: int) -> None`
-
-Set display brightness.
-
-**Parameters:**
-- `value` (int): Brightness level (0-10)
-
-**Raises:**
-- `ValueError`: If value is not 0-10
-
-#### `async set_volume(value: int) -> None`
-
-Set beep volume.
-
-**Parameters:**
-- `value` (int): Volume level (0-10)
-
-**Raises:**
-- `ValueError`: If value is not 0-10
-
-### State Monitoring
-
-#### `on_state_update(callback: Callable[[DeviceState], None]) -> None`
-
-Register a callback function for state updates. The callback will be called whenever the device state changes.
-
-**Parameters:**
-- `callback` (Callable): Function that takes a `DeviceState` parameter
-
-**Example:**
-```python
-def my_callback(state: DeviceState):
-    print(f"Voltage: {state.output_voltage}V")
-    print(f"Current: {state.output_current}A")
-    if state.protection_state != ProtectionState.NORMAL:
-        print(f"⚠ Protection: {state.protection_state.value}")
-
-device.on_state_update(my_callback)
-```
-
-## Data Models
-
-### `DeviceState`
-
-Complete device state dataclass containing all measurements and settings.
-
-**Key Fields:**
-- `output_voltage` (float): Current output voltage
-- `output_current` (float): Current output current
-- `output_power` (float): Current output power
-- `temperature` (float): Device temperature
-- `set_voltage` (float): Set voltage value
-- `set_current` (float): Set current value
-- `over_voltage_protection` (float): OVP threshold
-- `over_current_protection` (float): OCP threshold
-- `over_power_protection` (float): OPP threshold
-- `output_capacity` (float): Energy capacity in Ah
-- `output_energy` (float): Energy in Wh
-- `output_closed` (bool): Output enabled/disabled
-- `protection_state` (ProtectionState): Current protection state
-- `mode` (Mode): Output mode (CC or CV)
-
-### `DeviceInfo`
-
-Device information dataclass.
-
-**Fields:**
-- `model_name` (str): Model name
-- `hardware_version` (str): Hardware version
-- `firmware_version` (str): Firmware version
-
-### `ProtectionState` (Enum)
-
-Protection state enumeration.
-
-**Values:**
-- `NORMAL`: Normal operation
-- `OVP`: Over Voltage Protection triggered
-- `OCP`: Over Current Protection triggered
-- `OPP`: Over Power Protection triggered
-- `OTP`: Over Temperature Protection triggered
-- `LVP`: Low Voltage Protection triggered
-- `REP`: Reverse Connection Protection triggered
-
-### `Mode` (Enum)
-
-Output mode enumeration.
-
-**Values:**
-- `CC`: Constant Current mode
-- `CV`: Constant Voltage mode
-
-## Exceptions
-
-### `DPS150Error`
-
-Base exception for all DPS-150 errors.
-
-### `DPS150ConnectionError`
-
-Raised when there are connection issues with the device.
-
-### `DPS150ProtocolError`
-
-Raised when there are protocol errors (bad checksum, malformed packet, etc.).
-
-### `DPS150TimeoutError`
-
-Raised when a communication timeout occurs.
-
-### `DPS150ProtectionError`
-
-Raised when a protection state is triggered.
-
-**Attributes:**
-- `protection_state` (str): The protection state that was triggered
-
-## Protocol Details
-
-The library implements the DPS-150 serial communication protocol:
-
-### Serial Settings
-
-- **Baud Rate**: 115200
-- **Data Bits**: 8
-- **Stop Bits**: 1
-- **Parity**: None
-- **Flow Control**: Hardware (RTS/CTS)
-
-### Packet Format
-
-**Outgoing packets:**
-```
-[0xF1, command, type, length, data..., checksum]
-```
-
-**Incoming packets:**
-```
-[0xF0, command, type, length, data..., checksum]
-```
-
-**Checksum calculation:**
-```
-checksum = (type + length + sum(data_bytes)) % 256
-```
-
-**Data encoding:**
-- Float values: Little-endian 32-bit IEEE 754 format
-- String values: UTF-8 encoded, null-terminated
-- Byte values: Single byte (0-255)
-
-### Command Codes
-
-- `0xA1`: GET - Request value from device
-- `0xB1`: SET - Set value on device
-- `0xC1`: Connection/initialization command
-
-## Project Structure
-
-```
-DPS-150/
-├── dps150/              # Main package
-│   ├── __init__.py      # Package exports
-│   ├── device.py        # Main DPS150 class
-│   ├── protocol.py      # Packet encoding/decoding
-│   ├── transport.py       # Serial communication layer
-│   ├── models.py        # Data models (DeviceState, DeviceInfo)
-│   ├── constants.py    # Protocol constants
-│   ├── exceptions.py   # Custom exceptions
-│   └── utils.py        # Utility functions
-├── tests/               # Test suite
-├── example.ipynb        # Jupyter notebook examples
-├── setup.py            # Package setup
-├── requirements.txt    # Dependencies
-└── README.md           # This file
-```
-
-## Testing
-
-Run the test suite:
-
-```bash
-pytest
-```
-
-For coverage:
-
-```bash
-pytest --cov=dps150 --cov-report=html
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Acknowledgments
-
-This library is based on the JavaScript implementation by [cho45](https://github.com/cho45/fnirsi-dps-150). Special thanks for reverse-engineering the protocol and providing the reference implementation.
-
-## Related Projects
-
-- [JavaScript/WebSerial Implementation](https://github.com/cho45/fnirsi-dps-150) - Original JavaScript implementation
-- [FNIRSI DPS-150 Product Page](https://www.fnirsi.com/products/dps-150)
-
-## Support
-
-For issues, questions, or feature requests, please open an issue on GitHub.
+The implementation is complete as a supervised prototype. Validate cell-terminal voltage and current near the intended termination threshold before trusting a real charging endpoint.
